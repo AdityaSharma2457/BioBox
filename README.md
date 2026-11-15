@@ -31,7 +31,7 @@ The older Express/SQLite API remains available for its existing test suite and o
 1. Authenticate with `npx wrangler login`.
 2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`. The Worker name is `biobox` to match the connected Cloudflare build project.
 3. Apply the schema with `npm run d1:migrate`.
-4. Create the R2 bucket with `npm run r2:create`.
+4. Create the R2 bucket **before the first deploy** with `npm run r2:create` (or create a bucket named `bio-box-media` in Cloudflare Dashboard → R2). The bucket name must exactly match `bucket_name` in `wrangler.jsonc`.
 5. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
 6. Build and deploy with `npm run deploy`.
 
