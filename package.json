@@ -18,7 +18,6 @@
     "cf:dev": "vite dev",
     "d1:create": "wrangler d1 create bio-box-production",
     "d1:migrate": "wrangler d1 migrations apply bio-box-production --remote",
-    "r2:create": "wrangler r2 bucket create bio-box-media",
     "data:export": "node scripts/export-sqlite-to-d1.mjs"
   },
   "dependencies": {

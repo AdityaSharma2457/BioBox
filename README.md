@@ -1,6 +1,6 @@
 # Bio Box
 
-Bio Box is a creator portfolio app built with React, Vite, and TypeScript. The production app runs as one Cloudflare Worker: the Worker serves the React site and its API, Cloudflare D1 stores account, portfolio, subscription, and asset metadata, and Cloudflare R2 stores uploaded image/audio/video files.
+Bio Box is a creator portfolio app built with React, Vite, and TypeScript. The production app runs as one Cloudflare Worker. D1 stores account, portfolio, subscription, and uploaded-file data. Larger uploaded files are split into chunks so each D1 row stays below its 2 MB row limit.
 
 ## Local development
 
@@ -11,17 +11,12 @@ npm install
 Copy-Item .env.example .dev.vars
 ```
 
-Set `JWT_SECRET` in `.dev.vars` to a random secret of at least 32 characters. For the Cloudflare runtime and local D1 database, run:
+Set `JWT_SECRET` in `.dev.vars` to a random secret of at least 32 characters. Create/configure D1 and start the Cloudflare Worker locally:
 
 ```sh
 npx wrangler d1 create bio-box-production
-npm run cf:dev
-```
-
-Apply the migration locally before using the app:
-
-```sh
 npx wrangler d1 migrations apply bio-box-production --local
+npm run cf:dev
 ```
 
 The older Express/SQLite API remains available for its existing test suite and optional local development: copy `.env.example` to `.env`, then run `npm run dev`.
@@ -29,33 +24,33 @@ The older Express/SQLite API remains available for its existing test suite and o
 ## Deploy to Cloudflare
 
 1. Authenticate with `npx wrangler login`.
-2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`. The Worker name is `biobox` to match the connected Cloudflare build project.
+2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc`. The Worker name is `biobox` to match the connected Cloudflare build project.
 3. Apply the schema with `npm run d1:migrate`.
-4. Create the R2 bucket **before the first deploy** with `npm run r2:create` (or create a bucket named `bio-box-media` in Cloudflare Dashboard → R2). The bucket name must exactly match `bucket_name` in `wrangler.jsonc`.
-5. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
-6. Build and deploy with `npm run deploy`.
+4. Set the Worker secret with `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
+5. Build and deploy with `npm run deploy`.
 
-The Wrangler configuration binds D1 as `DB`, R2 as `MEDIA_BUCKET`, and static assets as `ASSETS`. D1 limits an individual row to 2 MB, so user-uploaded files live in R2. The React single-page app, API, and public asset routes share the Worker origin, so no CORS origin setting is needed. Add a custom domain in the Cloudflare dashboard after the first deployment if desired.
+The Worker binds D1 as `DB` and static assets as `ASSETS`. In Cloudflare Workers Builds, use `npm run build` as the build command and `npx wrangler deploy` as the deploy command. No R2 bucket or R2 account setup is required.
 
 ## Import existing local SQLite data
 
-The migration only creates the database schema; it does not copy the existing local SQLite records. To import local accounts, portfolios, subscriptions, and uploaded files, ensure the D1 database and R2 bucket above exist, then authenticate Wrangler with `npx wrangler login`. Generate a private import package and run it from PowerShell:
+The schema migration does not copy local SQLite records automatically. To import the local account, portfolio, subscription, and uploaded files, authenticate Wrangler with `npx wrangler login`, then run:
 
 ```powershell
 npm run data:export
 powershell.exe -ExecutionPolicy Bypass -File .\data\import-local-data.ps1
 ```
 
-The generated SQL and media files stay under the ignored `data/` directory. The importer applies D1 migrations, uploads the files to R2, then imports the records into D1. It uses `INSERT OR IGNORE` so rerunning it does not duplicate records.
+This generates a private SQL file under the ignored `data/` directory, applies D1 migrations, and imports account records and chunked file contents into D1. The SQL export splits media into 32 KB chunks so each generated SQL statement remains under D1's statement-size limit. `INSERT OR IGNORE` makes reruns idempotent.
 
 ## Commands
 
-- `npm run dev` — local Express API with Vite frontend.
-- `npm run cf:dev` — Cloudflare Worker and local D1 development.
+- `npm run dev` — run the Express API and Vite frontend locally.
+- `npm run cf:dev` — run the Cloudflare Worker with local D1.
 - `npm run build` — type-check and build the Cloudflare app.
 - `npm run deploy` — build and deploy the Worker.
+- `npm run data:export` — prepare a private import of local SQLite data for D1.
 - `npm run build:server` — compile the legacy Express API.
-- `npm test` — run the existing API workflow tests.
+- `npm test` — run API workflow tests.
 - `npm run lint` — run Oxlint.
 
 ## Notes
