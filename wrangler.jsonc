@@ -1,22 +1,32 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "biobox",
-  "main": "./server/worker.ts",
-  "compatibility_date": "2026-11-15",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "binding": "ASSETS",
-    "directory": "./dist/client",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": true
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "bio-box-production",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "observability": { "enabled": true }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "biobox",
+	"main": "./server/worker.ts",
+	"compatibility_date": "2026-11-15",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "./dist/client",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "bio-box-production",
+			"database_id": "a0ffceca-7bbf-4841-a802-0077633796e6",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "bio_box_production",
+			"database_name": "bio-box-production",
+			"database_id": "a0ffceca-7bbf-4841-a802-0077633796e6",
+			"remote": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
 }
