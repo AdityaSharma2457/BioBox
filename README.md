@@ -14,7 +14,7 @@ Copy-Item .env.example .dev.vars
 Set `JWT_SECRET` in `.dev.vars` to a random secret of at least 32 characters. For the Cloudflare runtime and local D1 database, run:
 
 ```sh
-npm run d1:create
+npx wrangler d1 create bio-box-production
 npm run cf:dev
 ```
 
