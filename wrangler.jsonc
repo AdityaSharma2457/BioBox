@@ -6,6 +6,9 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"secrets": {
+		"required": ["JWT_SECRET"]
+	},
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./dist/client",
@@ -16,14 +19,8 @@
 		{
 			"binding": "DB",
 			"database_name": "bio-box-production",
-			"database_id": "a0ffceca-7bbf-4841-a802-0077633796e6",
+			"database_id": "e0414f67-e8ea-49ab-a05f-10183467aa88",
 			"migrations_dir": "migrations"
-		},
-		{
-			"binding": "bio_box_production",
-			"database_name": "bio-box-production",
-			"database_id": "a0ffceca-7bbf-4841-a802-0077633796e6",
-			"remote": true
 		}
 	],
 	"observability": {
