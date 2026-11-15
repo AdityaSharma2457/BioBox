@@ -17,7 +17,9 @@
     "deploy": "npm run build && wrangler deploy",
     "cf:dev": "vite dev",
     "d1:create": "wrangler d1 create bio-box-production",
-    "d1:migrate": "wrangler d1 migrations apply bio-box-production --remote"
+    "d1:migrate": "wrangler d1 migrations apply bio-box-production --remote",
+    "r2:create": "wrangler r2 bucket create bio-box-media",
+    "data:export": "node scripts/export-sqlite-to-d1.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -1,6 +1,6 @@
 # Bio Box
 
-Bio Box is a creator portfolio app built with React, Vite, and TypeScript. The production app runs as one Cloudflare Worker: the Worker serves the React site and its API, Cloudflare D1 stores account and portfolio data, and uploaded image/audio/video assets are stored as D1 BLOBs.
+Bio Box is a creator portfolio app built with React, Vite, and TypeScript. The production app runs as one Cloudflare Worker: the Worker serves the React site and its API, Cloudflare D1 stores account, portfolio, subscription, and asset metadata, and Cloudflare R2 stores uploaded image/audio/video files.
 
 ## Local development
 
@@ -31,10 +31,22 @@ The older Express/SQLite API remains available for its existing test suite and o
 1. Authenticate with `npx wrangler login`.
 2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`. The Worker name is `biobox` to match the connected Cloudflare build project.
 3. Apply the schema with `npm run d1:migrate`.
-4. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
-5. Build and deploy with `npm run deploy`.
+4. Create the R2 bucket with `npm run r2:create`.
+5. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
+6. Build and deploy with `npm run deploy`.
 
-The Wrangler configuration binds D1 as `DB` and the static assets as `ASSETS`. The React single-page app, API, and public asset routes share the Worker origin, so no CORS origin setting is needed. Add a custom domain in the Cloudflare dashboard after the first deployment if desired.
+The Wrangler configuration binds D1 as `DB`, R2 as `MEDIA_BUCKET`, and static assets as `ASSETS`. D1 limits an individual row to 2 MB, so user-uploaded files live in R2. The React single-page app, API, and public asset routes share the Worker origin, so no CORS origin setting is needed. Add a custom domain in the Cloudflare dashboard after the first deployment if desired.
+
+## Import existing local SQLite data
+
+The migration only creates the database schema; it does not copy the existing local SQLite records. To import local accounts, portfolios, subscriptions, and uploaded files, ensure the D1 database and R2 bucket above exist, then authenticate Wrangler with `npx wrangler login`. Generate a private import package and run it from PowerShell:
+
+```powershell
+npm run data:export
+powershell.exe -ExecutionPolicy Bypass -File .\data\import-local-data.ps1
+```
+
+The generated SQL and media files stay under the ignored `data/` directory. The importer applies D1 migrations, uploads the files to R2, then imports the records into D1. It uses `INSERT OR IGNORE` so rerunning it does not duplicate records.
 
 ## Commands
 

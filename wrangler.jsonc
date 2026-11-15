@@ -26,6 +26,12 @@
 			"remote": true
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA_BUCKET",
+			"bucket_name": "bio-box-media"
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

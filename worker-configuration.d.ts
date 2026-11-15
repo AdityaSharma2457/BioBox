@@ -1,7 +1,15 @@
 interface Env {
   DB: D1Database
   ASSETS: Fetcher
+  MEDIA_BUCKET: R2Bucket
   JWT_SECRET: string
+}
+
+interface ImportMetaEnv {
+  readonly DB: D1Database
+  readonly ASSETS: Fetcher
+  readonly MEDIA_BUCKET: R2Bucket
+  readonly JWT_SECRET: string
 }
 
 declare global {
@@ -21,6 +29,11 @@ declare global {
   }
   interface Fetcher {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>
+  }
+  interface R2Bucket {
+    put(key: string, value: ArrayBuffer | ArrayBufferView | ReadableStream | string, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>
+    get(key: string): Promise<{ body: ReadableStream } | null>
+    delete(key: string): Promise<void>
   }
 }
 

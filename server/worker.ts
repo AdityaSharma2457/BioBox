@@ -5,7 +5,7 @@ import { instagramProfileFromUrl } from './instagram.js'
 import { fetchLinkPreview } from './previews.js'
 import { fetchProductPreview } from './products.js'
 
-interface Env { DB: D1Database; ASSETS: Fetcher; JWT_SECRET: string }
+interface Env { DB: D1Database; ASSETS: Fetcher; MEDIA_BUCKET: R2Bucket; JWT_SECRET: string }
 const sessionCookie = 'gather_session'
 const authInput = z.object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(100).refine(value => new TextEncoder().encode(value).length <= 72), instagramUrl: z.string().url().max(2048) })
 const loginInput = authInput.pick({ email: true, password: true })
@@ -121,13 +121,17 @@ async function apiHandler(request: Request, env: Env): Promise<Response> {
     const data=new Uint8Array(await file.arrayBuffer()); const detected=imageType(data); const mime= file.type.startsWith('image/')?detected:mediaType(data,file.type)
     if(!mime)return fail('Use a JPEG, PNG, or WebP image, or a supported audio/video file.',415)
     if(detected&&data.length>5*1024*1024)return fail('Images must be 5 MB or smaller.',413)
-    const id=crypto.randomUUID(); await db.prepare('INSERT INTO assets (id,user_id,mime_type,data,created_at) VALUES (?,?,?,?,?)').bind(id,userId,mime,data,new Date().toISOString()).run()
+    const id=crypto.randomUUID(); const createdAt=new Date().toISOString()
+    await env.MEDIA_BUCKET.put(id,data,{httpMetadata:{contentType:mime}})
+    try { await db.prepare('INSERT INTO assets (id,user_id,mime_type,created_at) VALUES (?,?,?,?)').bind(id,userId,mime,createdAt).run() }
+    catch(error) { await env.MEDIA_BUCKET.delete(id); throw error }
     return json({imageUrl:`/api/assets/${id}`},201)
   }
   if(method==='GET'&&path.startsWith('/api/assets/')){
     const id=path.slice('/api/assets/'.length); if(!/^[0-9a-f-]{36}$/i.test(id))return fail('Image not found.',404)
-    const asset=await db.prepare('SELECT mime_type,data FROM assets WHERE id = ?').bind(id).first<{mime_type:string;data:ArrayBuffer}>(); if(!asset)return fail('Image not found.',404)
-    return new Response(asset.data,{headers:{'Content-Type':asset.mime_type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}})
+    const asset=await db.prepare('SELECT mime_type FROM assets WHERE id = ?').bind(id).first<{mime_type:string}>(); if(!asset)return fail('Image not found.',404)
+    const object=await env.MEDIA_BUCKET.get(id);if(!object)return fail('Image not found.',404)
+    return new Response(object.body,{headers:{'Content-Type':asset.mime_type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}})
   }
   if(path==='/api/me'&&method==='GET'){
     const userId=await currentUser(request,env);if(!userId)return fail('Please sign in to continue.',401)
