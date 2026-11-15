@@ -95,6 +95,16 @@ function text(value: unknown): string {
   return ''
 }
 
+function concatChunks(chunks: Uint8Array[], size: number): Uint8Array {
+  const joined = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, offset)
+    offset += chunk.length
+  }
+  return joined
+}
+
 export async function fetchProductPreview(value: string): Promise<ProductPreview | null> {
   let url: URL
   try {
@@ -132,7 +142,7 @@ export async function fetchProductPreview(value: string): Promise<ProductPreview
       }
       chunks.push(chunk)
     }
-    const html = new TextDecoder().decode(Buffer.concat(chunks))
+    const html = new TextDecoder().decode(concatChunks(chunks, size))
     const product = productJsonLd(html)
     const offer = productOffer(product)
     const imageValue = firstString(product?.image) || metaContent(html, 'og:image')

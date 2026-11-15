@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { api, ApiError, makeBlockId, previewProduct, savePortfolio, uploadImage, type AccountView, type LinkPreview, type ProductPreview } from './api'
+import { api, ApiError, makeBlockId, previewProduct, savePortfolio, uploadImage, uploadMedia, type AccountView, type LinkPreview, type ProductPreview } from './api'
 import type { Portfolio, PortfolioBlock, PortfolioProduct, PortfolioSocials, PlanKey } from '../shared/model'
 import './App.css'
 
@@ -331,6 +331,20 @@ const socialFields = [
   { key: 'email', label: 'Business email', placeholder: 'hello@example.com', type: 'email' },
 ] as const
 
+function instagramUsernameFromUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || !['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return ''
+    const path = url.pathname.split('/').filter(Boolean)
+    const username = path[0] ?? ''
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) return ''
+    if (['accounts', 'about', 'direct', 'explore', 'legal', 'p', 'reel', 'reels', 'stories'].includes(username.toLowerCase())) return ''
+    return username
+  } catch {
+    return ''
+  }
+}
+
 function EditorPage() {
   const { account, refresh, signOut } = useAuth()
   const [draft, setDraft] = useState<Portfolio>(() => account?.portfolio ?? {
@@ -354,6 +368,7 @@ function EditorPage() {
   const [linkTitle, setLinkTitle] = useState('')
   const [linkDescription, setLinkDescription] = useState('')
   const [linkImageUrl, setLinkImageUrl] = useState('')
+  const [linkExpiresAt, setLinkExpiresAt] = useState('')
   const [productUrl, setProductUrl] = useState('')
   const [productTitle, setProductTitle] = useState('')
   const [productImageUrl, setProductImageUrl] = useState('')
@@ -364,8 +379,10 @@ function EditorPage() {
   const [productSyncMessage, setProductSyncMessage] = useState('')
   const [syncingProductId, setSyncingProductId] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [draggedBlockId, setDraggedBlockId] = useState('')
   const [copied, setCopied] = useState(false)
   const navigate = useNavigate()
+  const pageSlug = instagramUsernameFromUrl(draft.instagramUrl) || draft.instagramUsername.toLowerCase()
 
   if (!account?.subscription?.active) return <Navigate to="/plans" replace />
 
@@ -391,6 +408,33 @@ function EditorPage() {
     }
   }
 
+  async function addMedia(file: File) {
+    if (draft.blocks.length >= 20) {
+      setMessage('Your page can have up to 20 attachments.')
+      return
+    }
+    if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+      setMessage('Choose a supported audio or video file.')
+      return
+    }
+    setUploading(true)
+    setMessage('')
+    try {
+      const mediaUrl = await uploadMedia(file)
+      update('blocks', [...draft.blocks, {
+        id: makeBlockId(),
+        type: 'media',
+        mediaUrl,
+        mediaType: file.type.startsWith('audio/') ? 'audio' : 'video',
+        title: file.name.replace(/\.[^.]+$/, '').slice(0, 100) || 'My audio or video',
+      }])
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : 'That audio or video could not be uploaded.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   async function addLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setMessage('')
@@ -400,6 +444,10 @@ function EditorPage() {
       if (url.protocol !== 'https:') throw new Error()
     } catch {
       setMessage('Add a valid HTTPS link.')
+      return
+    }
+    if (draft.blocks.length >= 20) {
+      setMessage('Your page can have up to 20 attachments.')
       return
     }
 
@@ -412,21 +460,33 @@ function EditorPage() {
         return
       }
     }
-    const block: PortfolioBlock = {
-      id: makeBlockId(),
-      type: 'link',
-      url: url.toString(),
-      title: linkTitle.trim() || preview?.title || 'A link worth opening',
-      description: linkDescription.trim(),
-      imageUrl: linkImageUrl.trim() || preview?.imageUrl,
-      provider: preview?.provider || providerFromUrl(url),
-    }
+    const isInstagramPost = ['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase()) &&
+      /^\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/.test(url.pathname)
+    const block: PortfolioBlock = isInstagramPost
+      ? {
+          id: makeBlockId(),
+          type: 'instagram',
+          url: url.toString(),
+          title: linkTitle.trim() || 'Instagram post',
+          expiresAt: linkExpiresAt || undefined,
+        }
+      : {
+          id: makeBlockId(),
+          type: 'link',
+          url: url.toString(),
+          title: linkTitle.trim() || preview?.title || 'A link worth opening',
+          description: linkDescription.trim(),
+          imageUrl: linkImageUrl.trim() || preview?.imageUrl,
+          provider: preview?.provider || providerFromUrl(url),
+          expiresAt: linkExpiresAt || undefined,
+        }
     update('blocks', [...draft.blocks, block])
     setLinkUrl('')
     setLinkTitle('')
     setLinkDescription('')
     setLinkImageUrl('')
-    setMessage(preview ? `${preview.provider} preview added.` : 'Link added. Add a title or image to make it feel like yours.')
+    setLinkExpiresAt('')
+    setMessage(isInstagramPost ? 'Instagram post added.' : preview ? `${preview.provider} preview added.` : 'Link added. Add a title or image to make it feel like yours.')
   }
 
   function normalizeProductUrl(value: string): string | null {
@@ -535,7 +595,12 @@ function EditorPage() {
     setSaving(true)
     setMessage('')
     try {
-      const result = await savePortfolio(draft)
+      const username = instagramUsernameFromUrl(draft.instagramUrl)
+      const result = await savePortfolio({
+        ...draft,
+        slug: username.toLowerCase(),
+        instagramUsername: username,
+      })
       await refresh()
       setDraft(result.portfolio)
       setSaved(true)
@@ -549,21 +614,38 @@ function EditorPage() {
 
   function setInstagramUrl(value: string) {
     const normalized = value.trim().startsWith('http') ? value.trim() : `https://${value.trim()}`
-    let username = draft.instagramUsername
-    try {
-      const url = new URL(normalized)
-      if (['www.instagram.com', 'instagram.com'].includes(url.hostname)) {
-        username = url.pathname.split('/').filter(Boolean)[0] ?? username
-      }
-    } catch {
-      username = draft.instagramUsername
-    }
-    setDraft({ ...draft, instagramUrl: normalized, instagramUsername: username })
+    const username = instagramUsernameFromUrl(normalized) || draft.instagramUsername
+    setDraft({ ...draft, instagramUrl: normalized, instagramUsername: username, slug: username.toLowerCase() })
     setSaved(false)
   }
 
   function removeBlock(id: string) {
     update('blocks', draft.blocks.filter((block) => block.id !== id))
+  }
+
+  function moveBlock(id: string, targetId: string) {
+    if (id === targetId) return
+    const from = draft.blocks.findIndex((block) => block.id === id)
+    const to = draft.blocks.findIndex((block) => block.id === targetId)
+    if (from < 0 || to < 0) return
+    const blocks = [...draft.blocks]
+    const [moved] = blocks.splice(from, 1)
+    blocks.splice(to, 0, moved)
+    update('blocks', blocks)
+  }
+
+  function moveBlockBy(id: string, offset: number) {
+    const index = draft.blocks.findIndex((block) => block.id === id)
+    const target = draft.blocks[index + offset]
+    if (target) moveBlock(id, target.id)
+  }
+
+  function updateLinkBlock(id: string, field: 'expiresAt' | 'highlightColor', value: string) {
+    update('blocks', draft.blocks.map((block) =>
+      (block.type === 'link' || block.type === 'instagram') && block.id === id
+        ? { ...block, [field]: value || undefined }
+        : block,
+    ))
   }
 
   function updateImageBlock(id: string, field: 'alt' | 'caption', value: string) {
@@ -574,7 +656,7 @@ function EditorPage() {
 
   async function copyPageLink() {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/${draft.slug}`)
+      await navigator.clipboard.writeText(`${window.location.origin}/${pageSlug}`)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1800)
     } catch {
@@ -587,7 +669,7 @@ function EditorPage() {
       <header className="topbar editor-topbar">
         <Brand />
         <div className="editor-topbar-center"><span className={`save-dot${saved ? ' is-saved' : ''}`} />{saved ? 'All changes saved' : 'Unsaved changes'}</div>
-        <div className="topbar-actions"><Link className="button button-quiet button-small" to={`/${draft.slug}`} target="_blank" rel="noreferrer">Preview <span aria-hidden="true">↗</span></Link><button className="button button-dark button-small" disabled={saving || saved} onClick={() => void save()}>{saving ? 'Saving…' : 'Save page'}</button><button className="button-as-link logout-button" onClick={() => void signOut().then(() => navigate('/'))}>Log out</button></div>
+        <div className="topbar-actions"><Link className="button button-quiet button-small" to={`/${pageSlug}`} target="_blank" rel="noreferrer">Preview <span aria-hidden="true">↗</span></Link><button className="button button-dark button-small" disabled={saving || saved} onClick={() => void save()}>{saving ? 'Saving…' : 'Save page'}</button><button className="button-as-link logout-button" onClick={() => void signOut().then(() => navigate('/'))}>Log out</button></div>
       </header>
       <div className="editor-workspace">
         <section className="editor-panel">
@@ -625,14 +707,34 @@ function EditorPage() {
               <label>Give it a name <span className="optional-label">optional</span><input value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="We’ll look for a title for you" /></label>
               <label>Short note <span className="optional-label">optional</span><input value={linkDescription} onChange={(event) => setLinkDescription(event.target.value)} placeholder="What should people know?" /></label>
               <label>Cover image URL <span className="optional-label">optional</span><input value={linkImageUrl} onChange={(event) => setLinkImageUrl(event.target.value)} placeholder="Add your own image if you like" /></label>
-              <p className="preview-hint">For Spotify, YouTube, and SoundCloud, we’ll try to find the name and cover art. Your pasted URL stays behind the scenes.</p>
-              <button className="button button-outline" disabled={!linkUrl.trim()}>＋ Add a link</button>
+              <label>Hide after <span className="optional-label">optional</span><input type="date" value={linkExpiresAt} onChange={(event) => setLinkExpiresAt(event.target.value)} /></label>
+              <p className="preview-hint">For Spotify, YouTube, and SoundCloud, we’ll try to find the name and cover art. Instagram post links appear as embeds.</p>
+              <button className="button button-outline" disabled={!linkUrl.trim() || draft.blocks.length >= 20}>＋ Add a link or Instagram post</button>
             </form>
-            <label className="upload-field add-image-upload">Add a photo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file, (url) => update('blocks', [...draft.blocks, { id: makeBlockId(), type: 'image', imageUrl: url, alt: '', caption: '' }])); event.target.value = '' }} /><span className="upload-help">{uploading ? 'Uploading…' : 'A photo, artwork, or a favorite moment'}</span></label>
-            {draft.blocks.length > 0 && <div className="block-list"><div className="block-list-heading">ON YOUR PAGE <span>{draft.blocks.length}</span></div>{draft.blocks.map((block, index) => <div className="block-row" key={block.id}>
-              {block.type === 'image' ? <div className="block-thumb image-thumb">{block.imageUrl && <img src={block.imageUrl} alt="" />}</div> : <div className="block-thumb link-thumb">{block.imageUrl ? <img src={block.imageUrl} alt="" /> : <span>↗</span>}</div>}
-              <div className="block-row-copy">{block.type === 'image' ? <><input aria-label={`Caption for photo ${index + 1}`} value={block.caption} onChange={(event) => updateImageBlock(block.id, 'caption', event.target.value)} placeholder="Caption or QR label" /><input aria-label={`Alternative text for photo ${index + 1}`} value={block.alt} onChange={(event) => updateImageBlock(block.id, 'alt', event.target.value)} placeholder="Describe the image" /></> : <><strong>{block.title}</strong><small>{block.provider || 'Link'}</small></>}</div>
-              <button type="button" className="remove-block" aria-label={`Remove ${block.type === 'image' ? 'photo' : block.title}`} onClick={() => removeBlock(block.id)}>×</button>
+            <label className="upload-field add-image-upload">Add a photo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || draft.blocks.length >= 20} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file, (url) => update('blocks', [...draft.blocks, { id: makeBlockId(), type: 'image', imageUrl: url, alt: '', caption: '' }])); event.target.value = '' }} /><span className="upload-help">{uploading ? 'Uploading…' : 'JPEG, PNG, or WebP · up to 5 MB'}</span></label>
+            <label className="upload-field add-image-upload">Add audio or video<input type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/webm,video/mp4,video/webm" disabled={uploading || draft.blocks.length >= 20} onChange={(event) => { const file = event.target.files?.[0]; if (file) void addMedia(file); event.target.value = '' }} /><span className="upload-help">{uploading ? 'Uploading…' : 'MP3, WAV, OGG, M4A, MP4, or WebM · up to 20 MB'}</span></label>
+            {draft.blocks.length > 0 && <div className="block-list"><div className="block-list-heading">ON YOUR PAGE <span>{draft.blocks.length}</span><small>Drag to reorder</small></div>{draft.blocks.map((block, index) => <div className={`block-row${draggedBlockId === block.id ? ' is-dragged' : ''}`} key={block.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (draggedBlockId) moveBlock(draggedBlockId, block.id); setDraggedBlockId('') }}>
+              <button type="button" className="block-drag-handle" draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', block.id); setDraggedBlockId(block.id) }} onDragEnd={() => setDraggedBlockId('')} aria-label={`Drag to move attachment ${index + 1}`}>⠿</button>
+              {block.type === 'image'
+                ? <div className="block-thumb image-thumb"><img src={block.imageUrl} alt="" /></div>
+                : block.type === 'link' && block.imageUrl
+                  ? <div className="block-thumb link-thumb"><img src={block.imageUrl} alt="" /></div>
+                  : <div className="block-thumb link-thumb">{block.type === 'media' ? (block.mediaType === 'audio' ? '♫' : '▶') : block.type === 'instagram' ? '◎' : '↗'}</div>}
+              <div className="block-row-copy">
+                {block.type === 'image'
+                  ? <><input aria-label={`Caption for photo ${index + 1}`} value={block.caption} onChange={(event) => updateImageBlock(block.id, 'caption', event.target.value)} placeholder="Caption or QR label" /><input aria-label={`Alternative text for photo ${index + 1}`} value={block.alt} onChange={(event) => updateImageBlock(block.id, 'alt', event.target.value)} placeholder="Describe the image" /></>
+                  : <><strong>{block.title}</strong><small>{block.type === 'link' ? block.provider || 'Link' : block.type === 'instagram' ? 'Instagram post' : block.mediaType === 'audio' ? 'Audio' : 'Video'}</small>
+                    {(block.type === 'link' || block.type === 'instagram') && <div className="block-row-controls">
+                      {block.type === 'link' && <label title="Choose a highlight color"><span>Highlight</span><input type="color" aria-label={`Highlight color for ${block.title}`} value={block.highlightColor || '#ffffff'} onChange={(event) => updateLinkBlock(block.id, 'highlightColor', event.target.value)} /><button type="button" onClick={() => updateLinkBlock(block.id, 'highlightColor', '')}>Clear</button></label>}
+                      <label>Hide after<input type="date" aria-label={`Expiry date for ${block.title}`} value={block.expiresAt || ''} onChange={(event) => updateLinkBlock(block.id, 'expiresAt', event.target.value)} /></label>
+                    </div>}
+                  </>}
+              </div>
+              <div className="block-row-actions">
+                <button type="button" aria-label={`Move attachment ${index + 1} up`} disabled={index === 0} onClick={() => moveBlockBy(block.id, -1)}>↑</button>
+                <button type="button" aria-label={`Move attachment ${index + 1} down`} disabled={index === draft.blocks.length - 1} onClick={() => moveBlockBy(block.id, 1)}>↓</button>
+                <button type="button" className="remove-block" aria-label={`Remove ${block.type === 'image' ? 'photo' : block.title}`} onClick={() => removeBlock(block.id)}>×</button>
+              </div>
             </div>)}</div>}
           </div>
           <div className="editor-section">
@@ -659,8 +761,8 @@ function EditorPage() {
             </div>)}</div>}
           </div>
           <div className="editor-section address-section">
-            <div className="section-title"><span>05</span><div><h2>Your address</h2><p>A little link you can put in your bio.</p></div></div>
-            <label>Page link<div className="slug-input"><span>{window.location.host}/</span><input value={draft.slug} maxLength={30} onChange={(event) => update('slug', event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} /></div></label>
+            <div className="section-title"><span>05</span><div><h2>Your address</h2><p>Your page link always matches your Instagram username.</p></div></div>
+            <label>Page link<div className="slug-input" aria-label="Your Bio Box page link"><span>{window.location.host}/</span><strong>{pageSlug || 'your-username'}</strong></div></label>
           </div>
           {message && <div className={`editor-message${message.includes('could not') || message.includes('invalid') || message.includes('taken') ? ' message-error' : ''}`} role="status">{message}</div>}
           <button className="button button-dark button-wide save-bottom" disabled={saving || saved} onClick={() => void save()}>{saving ? 'Saving your page…' : saved ? 'All changes saved' : 'Save my page'} <span aria-hidden="true">↗</span></button>
@@ -668,7 +770,7 @@ function EditorPage() {
         <aside className="live-preview">
           <div className="preview-toolbar"><span><i /> LIVE PREVIEW</span><span>YOUR PAGE</span></div>
           <PortfolioDisplay portfolio={draft} preview />
-          <div className="share-card"><div className="share-spark">↗</div><span>LOOKING LIKE YOU</span><p>Save your page, then add this link to your bio.</p><div className="share-url">{window.location.host}/{draft.slug}</div><button className="copy-link-button" disabled={!saved} onClick={() => void copyPageLink()}>{copied ? 'Copied ✓' : 'Copy link'}</button></div>
+          <div className="share-card"><div className="share-spark">↗</div><span>LOOKING LIKE YOU</span><p>Save your page, then add this link to your bio.</p><div className="share-url">{window.location.host}/{pageSlug}</div><button className="copy-link-button" disabled={!saved || !pageSlug} onClick={() => void copyPageLink()}>{copied ? 'Copied ✓' : 'Copy link'}</button></div>
         </aside>
       </div>
     </main>
@@ -733,9 +835,39 @@ function ProductArtwork({ imageUrl, title }: { imageUrl: string; title: string }
   return <img src={imageUrl} alt={title} loading="lazy" onError={() => setUnavailable(true)} />
 }
 
+function instagramEmbedUrl(value: string): string {
+  const url = new URL(value)
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/embed/`
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
+function localDateString(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function PortfolioDisplay({ portfolio, preview = false }: { portfolio: Portfolio; preview?: boolean }) {
+  const [today, setToday] = useState(() => localDateString(new Date()))
+  useEffect(() => {
+    let timer = 0
+    const updateDate = () => {
+      const now = new Date()
+      setToday(localDateString(now))
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      timer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
+    }
+    updateDate()
+    return () => window.clearTimeout(timer)
+  }, [])
   const photo = portfolio.instagramPhotoUrl
   const initial = portfolio.displayName.trim().charAt(0).toUpperCase() || '✳'
+  const visibleBlocks = portfolio.blocks.filter((block) =>
+    !('expiresAt' in block) || !block.expiresAt || block.expiresAt >= today,
+  )
   return (
     <div className={`portfolio-display portfolio-${portfolio.template}${preview ? ' is-preview' : ''}`} style={{ '--portfolio-theme': portfolio.theme, '--portfolio-font': portfolioFontFamilies[portfolio.font] } as React.CSSProperties}>
       <div className="portfolio-cover"><div className="cover-orb" /><div className="cover-lines" /><span>MADE WITH A LITTLE LOVE</span></div>
@@ -748,12 +880,29 @@ function PortfolioDisplay({ portfolio, preview = false }: { portfolio: Portfolio
         <SocialLinks portfolio={portfolio} />
       </div>
       <div className="portfolio-blocks">
-        {portfolio.blocks.map((block) => block.type === 'image'
-          ? <figure className="portfolio-photo" key={block.id}><img src={block.imageUrl} alt={block.alt} />{block.caption && <figcaption>{block.caption}</figcaption>}</figure>
-          : <a className="portfolio-link-card" key={block.id} href={block.url} target="_blank" rel="noreferrer">
+        {visibleBlocks.map((block) => {
+          if (block.type === 'image') {
+            return <figure className="portfolio-photo" key={block.id}><img src={block.imageUrl} alt={block.alt} />{block.caption && <figcaption>{block.caption}</figcaption>}</figure>
+          }
+          if (block.type === 'media') {
+            return <figure className="portfolio-media" key={block.id}>
+              <figcaption>{block.title}</figcaption>
+              {block.mediaType === 'audio'
+                ? <audio controls preload="metadata" src={block.mediaUrl}>Your browser does not support audio playback.</audio>
+                : <video controls preload="metadata" src={block.mediaUrl}>Your browser does not support video playback.</video>}
+            </figure>
+          }
+          if (block.type === 'instagram') {
+            return <div className="instagram-embed" key={block.id}>
+              <iframe src={instagramEmbedUrl(block.url)} title={block.title} loading="lazy" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
+              <a href={block.url} target="_blank" rel="noreferrer">Open post on Instagram ↗</a>
+            </div>
+          }
+          return <a className={`portfolio-link-card${block.highlightColor ? ' is-highlighted' : ''}`} key={block.id} href={block.url} target="_blank" rel="noreferrer" style={block.highlightColor ? { '--link-highlight': block.highlightColor } as React.CSSProperties : undefined}>
             {block.imageUrl ? <div className="portfolio-link-art"><img src={block.imageUrl} alt="" /></div> : <div className="portfolio-link-art placeholder-art" style={{ backgroundColor: portfolio.theme }}><span>{block.provider === 'Spotify' ? '♫' : block.provider === 'YouTube' ? '▶' : '✳'}</span></div>}
             <span className="portfolio-link-copy"><strong>{block.title}</strong>{block.description && <small>{block.description}</small>}<small className="provider-label">{block.provider || 'LINK'}</small></span><span className="link-arrow">↗</span>
-          </a>)}
+          </a>
+        })}
       </div>
       <ProductCarousel products={portfolio.products} />
       {!preview && <footer className="portfolio-footer"><span>MADE WITH A LITTLE LOVE</span><Link className="biobox-cta" to="/"><BioBoxMark /><span>Create your own Bio Box</span><b aria-hidden="true">↗</b></Link></footer>}

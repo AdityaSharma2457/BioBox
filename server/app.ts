@@ -101,12 +101,35 @@ function imageType(buffer: Buffer): string | null {
   return null
 }
 
+function mediaType(buffer: Buffer, declaredType: string): string | null {
+  const isMp3 = buffer.length >= 3 && buffer.toString('ascii', 0, 3) === 'ID3' ||
+    buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0
+  const isWav = buffer.length >= 12 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WAVE'
+  const isOgg = buffer.length >= 4 && buffer.toString('ascii', 0, 4) === 'OggS'
+  const isWebm = buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+  const isMp4 = buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp'
+  const supported: Record<string, boolean> = {
+    'audio/mpeg': isMp3,
+    'audio/wav': isWav,
+    'audio/ogg': isOgg,
+    'audio/mp4': isMp4,
+    'audio/webm': isWebm,
+    'video/mp4': isMp4,
+    'video/webm': isWebm,
+  }
+  return Object.prototype.hasOwnProperty.call(supported, declaredType) && supported[declaredType]
+    ? declaredType
+    : null
+}
+
 export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }: AppOptions) {
   const app = express()
   const auth = requireAuth(jwtSecret)
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    limits: { fileSize: 20 * 1024 * 1024, files: 1 },
   })
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -148,6 +171,10 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
       res.status(409).json({ error: 'An account with that email already exists.' })
       return
     }
+    if (db.prepare('SELECT 1 FROM portfolios WHERE lower(instagram_username) = lower(?)').get(instagram.username)) {
+      res.status(409).json({ error: 'That Instagram username is already linked to a Bio Box.' })
+      return
+    }
 
     const passwordHash = await bcrypt.hash(parsed.data.password, 12)
     const createdAt = nowIso()
@@ -157,12 +184,8 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
           'INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)',
         ).run(email, passwordHash, createdAt)
         const userId = Number(user.lastInsertRowid)
-        const baseSlug = instagram.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
-        let slug = baseSlug.length >= 3 ? baseSlug.slice(0, 30) : `creator-${userId}`
-        if (db.prepare('SELECT 1 FROM portfolios WHERE slug = ?').get(slug)) {
-          const suffix = userId.toString(36)
-          slug = `${slug.slice(0, 29 - suffix.length)}-${suffix}`
-        }
+        let slug = instagram.username.toLowerCase()
+        if (db.prepare('SELECT 1 FROM portfolios WHERE slug = ?').get(slug)) slug = `creator-${userId}`
         db.prepare(`
           INSERT INTO portfolios (
             user_id, slug, display_name, instagram_url, instagram_username, created_at, updated_at
@@ -222,6 +245,21 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
       return
     }
     const userId = res.locals.userId as number
+    const duplicateUsername = db.prepare(
+      'SELECT 1 FROM portfolios WHERE lower(instagram_username) = lower(?) AND user_id != ?',
+    ).get(instagram.username, userId)
+    if (duplicateUsername) {
+      res.status(409).json({ error: 'That Instagram username is already linked to another Bio Box.' })
+      return
+    }
+    const existing = db.prepare('SELECT slug FROM portfolios WHERE user_id = ?').get(userId) as { slug: string } | undefined
+    if (!existing) {
+      res.status(404).json({ error: 'Your portfolio could not be found.' })
+      return
+    }
+    const slugConflict = db.prepare('SELECT 1 FROM portfolios WHERE slug = ? AND user_id != ?')
+      .get(instagram.username.toLowerCase(), userId)
+    const pageSlug = slugConflict ? existing.slug : instagram.username.toLowerCase()
     try {
       db.prepare(`
         UPDATE portfolios SET slug = ?, display_name = ?, bio = ?, instagram_url = ?,
@@ -229,11 +267,11 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
           font_family = ?, socials_json = ?, blocks_json = ?, products_json = ?, updated_at = ?
           WHERE user_id = ?
       `).run(
-        portfolio.slug,
+        pageSlug,
         portfolio.displayName,
         portfolio.bio,
         instagram.url,
-        portfolio.instagramUsername || instagram.username,
+        instagram.username,
         portfolio.instagramPhotoUrl,
         portfolio.template,
         portfolio.theme,
@@ -257,12 +295,18 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
 
   app.post('/api/assets', auth, upload.single('image'), (req, res) => {
     if (!req.file) {
-      res.status(400).json({ error: 'Choose an image to upload.' })
+      res.status(400).json({ error: 'Choose a file to upload.' })
       return
     }
-    const mimeType = imageType(req.file.buffer)
+    const detectedImageType = imageType(req.file.buffer)
+    const imageMimeType = req.file.mimetype.startsWith('image/') ? detectedImageType : null
+    const mimeType = imageMimeType ?? mediaType(req.file.buffer, req.file.mimetype)
     if (!mimeType) {
-      res.status(415).json({ error: 'Use a JPEG, PNG, or WebP image.' })
+      res.status(415).json({ error: 'Use a JPEG, PNG, or WebP image, or a supported audio/video file.' })
+      return
+    }
+    if (imageMimeType && req.file.buffer.length > 5 * 1024 * 1024) {
+      res.status(413).json({ error: 'Images must be 5 MB or smaller.' })
       return
     }
     const id = randomUUID()
@@ -358,8 +402,10 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
         p.instagram_photo_url, p.template, p.theme, p.font_family, p.socials_json,
         p.blocks_json, p.products_json, s.plan, s.expires_at
       FROM portfolios p LEFT JOIN subscriptions s ON s.user_id = p.user_id
-      WHERE p.slug = ?
-    `).get(req.params.slug) as (Record<string, string | null> & { plan: string | null; expires_at: string | null }) | undefined
+      WHERE p.slug = ? OR lower(p.instagram_username) = lower(?)
+      ORDER BY CASE WHEN lower(p.instagram_username) = lower(?) THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(req.params.slug, req.params.slug, req.params.slug) as (Record<string, string | null> & { plan: string | null; expires_at: string | null }) | undefined
     if (!row) {
       res.status(404).json({ error: 'We could not find this portfolio.' })
       return
@@ -391,7 +437,7 @@ export function createApp({ db, jwtSecret, clientOrigin, isProduction = false }:
       return
     }
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      res.status(413).json({ error: 'Images must be 5 MB or smaller.' })
+      res.status(413).json({ error: 'Files must be 20 MB or smaller.' })
       return
     }
     console.error('Unhandled API error:', error)

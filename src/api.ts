@@ -58,6 +58,13 @@ export async function uploadImage(file: File): Promise<string> {
   return result.imageUrl
 }
 
+export async function uploadMedia(file: File): Promise<string> {
+  const body = new FormData()
+  body.set('image', file)
+  const result = await api<{ imageUrl: string }>('/assets', { method: 'POST', body })
+  return result.imageUrl
+}
+
 export function previewProduct(url: string): Promise<ProductPreview> {
   return api<ProductPreview>(`/product-preview?url=${encodeURIComponent(url)}`)
 }

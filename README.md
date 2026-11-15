@@ -1,34 +1,51 @@
 # Bio Box
 
-Bio Box is a creator portfolio MVP: creators choose a template, font, and colors, add images, social links, products, and other links, then share one public page at a custom slug. Portfolio pages are rendered by the React app from data stored in SQLite; no per-creator HTML deployments are created.
+Bio Box is a creator portfolio app built with React, Vite, and TypeScript. The production app runs as one Cloudflare Worker: the Worker serves the React site and its API, Cloudflare D1 stores account and portfolio data, and uploaded image/audio/video assets are stored as D1 BLOBs.
 
-## Run locally
+## Local development
 
-1. Install Node.js 20 or newer.
-2. Install dependencies with `npm install`.
-3. Copy `.env.example` to `.env` and set `JWT_SECRET` to a random secret of at least 32 characters.
-4. Start the API and frontend together with `npm run dev`.
-5. Open `http://localhost:5173`.
+Requirements: Node.js 20 or newer and npm.
 
-The API listens on port 4000, and Vite proxies `/api` requests to it. SQLite creates `data/gather.sqlite3` on first run. Uploaded JPEG, PNG, and WebP files (up to 5 MB) are stored as SQLite BLOBs.
+```sh
+npm install
+Copy-Item .env.example .dev.vars
+```
 
-## MVP behavior
+Set `JWT_SECRET` in `.dev.vars` to a random secret of at least 32 characters. For the Cloudflare runtime and local D1 database, run:
 
-- Creators sign up with email, password, and an Instagram profile URL. The URL is used to infer the username. A creator can provide a profile-photo URL or upload a photo in the editor; uploaded images can be captioned or used for QR codes.
-- Portfolio owners can choose a sans, serif, rounded, or monospaced font and add optional Instagram, YouTube, X, Facebook, Snapchat, and business-email links.
-- A separate product shelf supports up to 20 merch/product links in a horizontal carousel. Product name, image, and price sync is best-effort on Amazon, Flipkart, Myntra, Meesho, Zara, AJIO, Snapdeal, Nykaa, and Shopify-hosted stores, with a manual refresh button and editable photo/price fallbacks. Personal stores that do not expose product metadata can still be added manually. This is a creator-triggered metadata snapshot, not an automatic price tracker; each store controls whether its public metadata can be read.
-- Instagram does not provide a dependable supported profile-photo lookup from a pasted URL alone. This MVP does not scrape Instagram; profile photos must be provided manually. Automatic Instagram profile refresh requires an authorized Instagram API integration.
-- Spotify, YouTube, and SoundCloud links are checked against their respective oEmbed endpoints when added. If a preview is unavailable, the creator can still add a title, description, and cover image. The raw URL is not shown as the card label.
-- Plans are a 7-day free pass, ₹750 for 30 days, and ₹3,000 for 365 days. Paid-plan activation is mocked; no payment is collected.
-- `FREE1MONTH` and `FREE1YEAR` activate the matching monthly or yearly duration. Coupon validation and plan activation happen on the server.
-- Public portfolios end with a Bio Box attribution button so visitors can start their own page.
-- Public portfolios are available only while their plan is active.
+```sh
+npm run d1:create
+npm run cf:dev
+```
+
+Apply the migration locally before using the app:
+
+```sh
+npx wrangler d1 migrations apply bio-box-production --local
+```
+
+The older Express/SQLite API remains available for its existing test suite and optional local development: copy `.env.example` to `.env`, then run `npm run dev`.
+
+## Deploy to Cloudflare
+
+1. Authenticate with `npx wrangler login`.
+2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`.
+3. Apply the schema with `npm run d1:migrate`.
+4. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
+5. Build and deploy with `npm run deploy`.
+
+The Wrangler configuration binds D1 as `DB` and the static assets as `ASSETS`. The React single-page app, API, and public asset routes share the Worker origin, so no CORS origin setting is needed. Add a custom domain in the Cloudflare dashboard after the first deployment if desired.
 
 ## Commands
 
-- `npm run dev` — run the API and Vite development server.
-- `npm run build` — type-check and build the frontend and API.
-- `npm test` — run API workflow tests.
+- `npm run dev` — local Express API with Vite frontend.
+- `npm run cf:dev` — Cloudflare Worker and local D1 development.
+- `npm run build` — type-check and build the Cloudflare app.
+- `npm run deploy` — build and deploy the Worker.
+- `npm run build:server` — compile the legacy Express API.
+- `npm test` — run the existing API workflow tests.
 - `npm run lint` — run Oxlint.
 
-For production, build the React app and deploy it alongside the API with a persistent SQLite data volume. Set `NODE_ENV=production`, `CLIENT_ORIGIN`, and a strong `JWT_SECRET`. This MVP does not include a production payment provider or an Instagram OAuth integration.
+## Notes
+
+Paid-plan activation is mocked; no payment is collected. `FREE1MONTH` and `FREE1YEAR` activate the matching durations. Instagram profile photos are provided manually; this app does not scrape Instagram or include an OAuth integration. Preview endpoints make outbound requests to supported providers. Rate limits on the Worker are per isolate; use a Cloudflare rate limiting rule for globally coordinated production throttling.

@@ -9,6 +9,17 @@ const imageSource = z.string().max(2048).refine((value) => {
     return false
   }
 })
+const expiresAt = z.iso.date()
+const highlightColor = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+const instagramPostUrl = httpsUrl.refine((value) => {
+  try {
+    const url = new URL(value)
+    return ['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase()) &&
+      /^\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/.test(url.pathname)
+  } catch {
+    return false
+  }
+})
 
 function socialProfile(hosts: string[]) {
   return z.union([z.literal(''), z.string().url().max(2048).refine((value) => {
@@ -40,6 +51,15 @@ export const portfolioBlockSchema = z.discriminatedUnion('type', [
     description: z.string().trim().max(220).default(''),
     imageUrl: imageSource.optional(),
     provider: z.string().max(40).optional(),
+    highlightColor: highlightColor.optional(),
+    expiresAt: expiresAt.optional(),
+  }),
+  z.object({
+    id: z.string().min(1).max(80),
+    type: z.literal('instagram'),
+    url: instagramPostUrl,
+    title: z.string().trim().min(1).max(100),
+    expiresAt: expiresAt.optional(),
   }),
   z.object({
     id: z.string().min(1).max(80),
@@ -47,6 +67,13 @@ export const portfolioBlockSchema = z.discriminatedUnion('type', [
     imageUrl: imageSource,
     alt: z.string().trim().max(180).default(''),
     caption: z.string().trim().max(120).default(''),
+  }),
+  z.object({
+    id: z.string().min(1).max(80),
+    type: z.literal('media'),
+    mediaUrl: imageSource,
+    mediaType: z.enum(['audio', 'video']),
+    title: z.string().trim().min(1).max(100),
   }),
 ])
 
@@ -60,7 +87,7 @@ export const productSchema = z.object({
 })
 
 export const portfolioSchema = z.object({
-  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/),
+  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{1,30}$/),
   displayName: z.string().trim().min(1).max(60),
   bio: z.string().trim().max(180).default(''),
   instagramUrl: httpsUrl.refine((value) => {

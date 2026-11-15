@@ -5,13 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:cloudflare": "vite",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite",
-    "build": "tsc -b && tsc -p server/tsconfig.json && vite build",
+    "build": "tsc -b && vite build",
+    "build:server": "tsc -p server/tsconfig.json",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "tsx --test server/app.test.ts",
-    "start": "node dist-server/server/index.js"
+    "start": "node dist-server/server/index.js",
+    "deploy": "wrangler deploy",
+    "cf:dev": "wrangler dev",
+    "d1:create": "wrangler d1 create bio-box-production",
+    "d1:migrate": "wrangler d1 migrations apply bio-box-production --remote"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -41,11 +47,13 @@
     "@types/react-dom": "^19.3.0",
     "@types/supertest": "^7.2.1",
     "@vitejs/plugin-react": "^6.1.2",
+    "@cloudflare/vite-plugin": "^1.30.0",
     "concurrently": "^10.0.7",
     "oxlint": "^1.90.0",
     "supertest": "^7.3.2",
     "tsx": "^4.23.15",
     "typescript": "~7.0.2",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "wrangler": "^4.88.0"
   }
 }

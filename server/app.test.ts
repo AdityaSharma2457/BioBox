@@ -37,7 +37,14 @@ test('registers a creator, activates a plan, and publishes a portfolio', async (
   assert.equal(registered.status, 201)
   assert.equal(registered.body.portfolio.instagramUsername, 'maya.chen')
   const slug = registered.body.portfolio.slug as string
+  assert.equal(slug, 'maya.chen')
   assert.equal((await client.get(`/api/public/${slug}`)).status, 404)
+  const duplicateInstagram = await request(app).post('/api/auth/register').send({
+    email: 'another-creator@example.com',
+    password: 'a-strong-password',
+    instagramUrl: 'https://instagram.com/maya.chen/',
+  })
+  assert.equal(duplicateInstagram.status, 409)
 
   const activated = await client.post('/api/subscription/activate').send({ plan: 'free' })
   assert.equal(activated.status, 200)
@@ -113,6 +120,16 @@ test('rejects invalid Instagram links, weak passwords, and unsafe portfolio imag
     socials: { instagram: '', youtube: 'https://not-youtube.example/profile', x: '', facebook: '', snapchat: '', email: '' },
   }
   assert.equal((await client.put('/api/portfolio').send(invalidSocial)).status, 400)
+  const invalidExpiry = {
+    ...portfolio,
+    blocks: [{ id: 'expired-link', type: 'link', url: 'https://example.com', title: 'Expired link', expiresAt: '2026-02-31' }],
+  }
+  assert.equal((await client.put('/api/portfolio').send(invalidExpiry)).status, 400)
+  const invalidInstagramPost = {
+    ...portfolio,
+    blocks: [{ id: 'not-a-post', type: 'instagram', url: 'https://instagram.com/creator/', title: 'Profile' }],
+  }
+  assert.equal((await client.put('/api/portfolio').send(invalidInstagramPost)).status, 400)
 })
 
 test('saves creator links and serves the saved content on the public page', async () => {
@@ -144,6 +161,19 @@ test('saves creator links and serves the saved content on the public page', asyn
       description: 'A playlist I made for you',
       imageUrl: 'https://i.scdn.co/image/cover',
       provider: 'Spotify',
+      highlightColor: '#f2c14e',
+      expiresAt: '2027-01-31',
+    }, {
+      id: 'insta-post',
+      type: 'instagram',
+      url: 'https://www.instagram.com/p/ABC123/',
+      title: 'A favorite moment',
+    }, {
+      id: 'video-clip',
+      type: 'media',
+      mediaUrl: 'https://cdn.example.com/clip.mp4',
+      mediaType: 'video',
+      title: 'Studio session',
     }],
     products: [{
       id: 'mug-1',
@@ -156,10 +186,15 @@ test('saves creator links and serves the saved content on the public page', asyn
   }
   assert.equal((await client.put('/api/portfolio').send(portfolio)).status, 200)
   await client.post('/api/subscription/activate').send({ plan: 'free' })
-  const response = await client.get('/api/public/my-creative-page')
+  const response = await client.get('/api/public/portfolio.creator')
   assert.equal(response.status, 200)
+  assert.equal(response.body.portfolio.slug, 'portfolio.creator')
   assert.equal(response.body.portfolio.blocks[0].title, 'Songs for slow mornings')
   assert.equal(response.body.portfolio.blocks[0].url, 'https://open.spotify.com/track/1234567890123456789012')
+  assert.equal(response.body.portfolio.blocks[0].highlightColor, '#f2c14e')
+  assert.equal(response.body.portfolio.blocks[0].expiresAt, '2027-01-31')
+  assert.equal(response.body.portfolio.blocks[1].type, 'instagram')
+  assert.equal(response.body.portfolio.blocks[2].mediaType, 'video')
   assert.equal(response.body.portfolio.font, 'rounded')
   assert.equal(response.body.portfolio.socials.youtube, 'https://youtube.com/@portfolio.creator')
   assert.equal(response.body.portfolio.products[0].price, '1,499')
@@ -189,11 +224,35 @@ test('stores uploaded image assets in SQLite and serves them by opaque ID', asyn
   assert.equal(asset.headers['content-type'], 'image/png')
   assert.deepEqual(asset.body, png)
 
+  const mp3 = Buffer.from('ID3audio test data')
+  const uploadedAudio = await client.post('/api/assets').attach('image', mp3, {
+    filename: 'audio.mp3',
+    contentType: 'audio/mpeg',
+  })
+  assert.equal(uploadedAudio.status, 201)
+  const audioAsset = await client.get(uploadedAudio.body.imageUrl)
+  assert.equal(audioAsset.headers['content-type'], 'audio/mpeg')
+  assert.deepEqual(audioAsset.body, mp3)
+
+  const mp4 = Buffer.from('0000ftypisomvideo test data')
+  const uploadedVideo = await client.post('/api/assets').attach('image', mp4, {
+    filename: 'video.mp4',
+    contentType: 'video/mp4',
+  })
+  assert.equal(uploadedVideo.status, 201)
+  const videoAsset = await client.get(uploadedVideo.body.imageUrl)
+  assert.equal(videoAsset.headers['content-type'], 'video/mp4')
+
   const unsupported = await client.post('/api/assets').attach('image', Buffer.from('<svg/>'), {
     filename: 'image.svg',
     contentType: 'image/svg+xml',
   })
   assert.equal(unsupported.status, 415)
+  const invalidMediaType = await client.post('/api/assets').attach('image', Buffer.from('not a media file'), {
+    filename: 'invalid.bin',
+    contentType: 'constructor',
+  })
+  assert.equal(invalidMediaType.status, 415)
 })
 
 test('does not request metadata for arbitrary link hosts', async () => {
