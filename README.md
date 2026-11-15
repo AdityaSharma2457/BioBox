@@ -29,7 +29,7 @@ The older Express/SQLite API remains available for its existing test suite and o
 ## Deploy to Cloudflare
 
 1. Authenticate with `npx wrangler login`.
-2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`.
+2. Create the production D1 database with `npm run d1:create`. Copy its ID into `database_id` in `wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`. The Worker name is `biobox` to match the connected Cloudflare build project.
 3. Apply the schema with `npm run d1:migrate`.
 4. Set the Worker secret: `npx wrangler secret put JWT_SECRET`. Use a unique random value of at least 32 characters.
 5. Build and deploy with `npm run deploy`.
