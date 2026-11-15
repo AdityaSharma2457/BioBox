@@ -14,8 +14,8 @@
     "preview": "vite preview",
     "test": "tsx --test server/app.test.ts",
     "start": "node dist-server/server/index.js",
-    "deploy": "wrangler deploy",
-    "cf:dev": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "cf:dev": "vite dev",
     "d1:create": "wrangler d1 create bio-box-production",
     "d1:migrate": "wrangler d1 migrations apply bio-box-production --remote"
   },

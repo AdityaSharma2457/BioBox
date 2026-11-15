@@ -3,7 +3,10 @@ import { cloudflare } from '@cloudflare/vite-plugin'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  plugins: [react(), cloudflare({ viteEnvironment: { name: 'worker' } })],
+  environments: {
+    worker: { build: { sourcemap: true } },
+  },
   server: {
     host: '0.0.0.0', // Listen on all network interfaces
     proxy: {
